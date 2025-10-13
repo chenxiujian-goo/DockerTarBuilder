@@ -6,22 +6,21 @@ on:
 
 env:
   VENV_NAME: py311-venv
-  PYTHON_VERSION: 3.11.11
+  PYTHON_VERSION: 3.11        # 官方可用版本号，setup-python 会提供最新 3.11.x
   ARCHIVE_NAME: py311-venv.tar.gz
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # ---------- 1. 指定 Python 3.11.11 ----------
+      # ---------- 1. 安装 Python 3.11 ----------
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # ---------- 2. 把依赖清单写进仓库 ----------
-      - name: Checkout repo (空仓库也行)
-        uses: actions/checkout@v4
+      # ---------- 2. 生成 requirements.txt ----------
+      - uses: actions/checkout@v4
 
       - name: Create requirements.txt
         run: |
@@ -102,7 +101,7 @@ jobs:
           xkit==0.0.0
           EOF
 
-      # ---------- 3. 创建虚拟环境并一次性装好 ----------
+      # ---------- 3. 创建虚拟环境并安装依赖 ----------
       - name: Create venv & install deps
         run: |
           python${{ env.PYTHON_VERSION }} -m venv ${{ env.VENV_NAME }}
@@ -110,7 +109,7 @@ jobs:
           pip install -U pip wheel
           pip install -r requirements.txt
 
-      # ---------- 4. 打包（相对路径，保证解压即可用） ----------
+      # ---------- 4. 打包 ----------
       - name: Tar venv
         run: tar -czf ${{ env.ARCHIVE_NAME }} ${{ env.VENV_NAME }}
 
@@ -120,4 +119,4 @@ jobs:
         with:
           name: ${{ env.ARCHIVE_NAME }}
           path: ${{ env.ARCHIVE_NAME }}
-          retention-days: 30   # 可按需调
+          retention-days: 30
