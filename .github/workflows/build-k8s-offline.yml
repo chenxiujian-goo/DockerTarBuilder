@@ -1,0 +1,58 @@
+name: Build k8s-test offline bundle
+
+on:
+  workflow_dispatch:        # 手动触发
+    inputs:
+      kk_version:
+        description: 'KubeKey version'
+        required: true
+        default: 'v3.1.8'
+      k8s_version:
+        description: 'Kubernetes version'
+        required: true
+        default: 'v1.32.6'
+      bundle_name:
+        description: '最终离线包文件名（不含扩展名）'
+        required: true
+        default: 'k8s-test'
+
+env:
+  KK_VERSION:   ${{ github.event.inputs.kk_version }}
+  K8S_VERSION:  ${{ github.event.inputs.k8s_version }}
+  BUNDLE_NAME:  ${{ github.event.inputs.bundle_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y curl tar gzip
+
+      - name: Download KubeKey
+        run: |
+          curl -sfL https://get-kk.kubesphere.io | VERSION=${{ env.KK_VERSION }} sh -
+          chmod +x kk
+          ./kk version
+
+      - name: Replace K8s version in manifest   # 动态写入版本号
+        run: |
+          sed -i "s|version: v1.32.6|version: ${{ env.K8S_VERSION }}|g" manifests/manifest-test.yaml
+
+      - name: Build offline package
+        run: |
+          ./kk manifest create -f manifests/manifest-test.yaml
+          ./kk package create --manifest manifests/manifest-test.yaml \
+                              --output ${{ env.BUNDLE_NAME }}.tgz
+          ls -lh ${{ env.BUNDLE_NAME }}.tgz
+
+      - name: Upload artifact (30-day valid)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUNDLE_NAME }}-offline
+          path: ${{ env.BUNDLE_NAME }}.tgz
+          retention-days: 30          # 显式 30 天
