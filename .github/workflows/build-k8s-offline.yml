@@ -13,7 +13,7 @@ on:
         required: true
         default: 'v1.32.6'
       bundle_name:
-        description: '最终离线包文件名（不含扩展名）'
+        description: '离线包文件名（不含扩展名）'
         required: true
         default: 'k8s-test'
 
@@ -50,9 +50,15 @@ jobs:
           ./package.sh -m manifests/manifest-test.yaml -o ${{ env.BUNDLE_NAME }}.tgz
           ls -lh ${{ env.BUNDLE_NAME }}.tgz
 
-      - name: Upload artifact (30-day valid)
-        uses: actions/upload-artifact@v4
+      - name: Create/Update Release & Upload asset
+        uses: softprops/action-gh-release@v1
         with:
-          name: ${{ env.BUNDLE_NAME }}-offline
-          path: ${{ env.BUNDLE_NAME }}.tgz
-          retention-days: 30
+          tag_name: k8s-offline          # 固定 tag，方便记忆
+          name: Kubernetes Offline Bundle ${{ env.K8S_VERSION }}
+          body: |
+            KubeKey ${{ env.KK_VERSION }} + Kubernetes ${{ env.K8S_VERSION }} 离线包  
+            生成时间：${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
+          files: ${{ env.BUNDLE_NAME }}.tgz
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
