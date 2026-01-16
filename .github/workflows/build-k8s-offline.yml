@@ -1,4 +1,3 @@
-# .github/workflows/build-k8s-offline.yml
 name: Build k8s-test offline bundle
 
 on:
@@ -7,7 +6,7 @@ on:
       kk_version:
         description: 'KubeKey version'
         required: true
-        default: 'v3.1.8'
+        default: 'v3.2.0'          # ← 改成 3.2.0
       k8s_version:
         description: 'Kubernetes version'
         required: true
@@ -30,9 +29,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y curl tar gzip
+        run: sudo apt-get update -y && sudo apt-get install -y curl tar gzip
 
       - name: Download KubeKey binary
         run: |
