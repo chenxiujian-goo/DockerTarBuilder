@@ -1,0 +1,21 @@
+apiVersion: kubekey.kubesphere.io/v1alpha2
+kind: Manifest
+metadata:
+  name: local-test
+spec:
+  arches: ["amd64"]
+  operatingSystems:
+  - type: ubuntu
+    version: "20.04"
+  kubernetesDistributions:
+  - type: kubernetes
+    version: v1.32.6
+  components:
+    containerd: {version: 1.7.6}
+    cni: {version: v1.7.1}
+    calico: {version: v3.28.2}
+  images:
+  - registry.cn-beijing.aliyuncs.com/kubesphereio/pause:3.8
+  - registry.cn-beijing.aliyuncs.com/kubesphereio/kube-*:v1.32.6
+  - registry.cn-beijing.aliyuncs.com/kubesphereio/coredns:v1.11.1
+  - registry.cn-beijing.aliyuncs.com/kubesphereio/node:v3.28.2
