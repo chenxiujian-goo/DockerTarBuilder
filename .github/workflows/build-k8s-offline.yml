@@ -1,7 +1,8 @@
+# .github/workflows/build-k8s-offline.yml
 name: Build k8s-test offline bundle
 
 on:
-  workflow_dispatch:        # 手动触发
+  workflow_dispatch:
     inputs:
       kk_version:
         description: 'KubeKey version'
@@ -33,21 +34,20 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y curl tar gzip
 
-      - name: Download KubeKey
+      - name: Download KubeKey release
         run: |
-          curl -sfL https://get-kk.kubesphere.io | VERSION=${{ env.KK_VERSION }} sh -
-          chmod +x kk
-          ./kk version
+          curl -L -o kubekey.tar.gz \
+            https://github.com/kubesphere/kubekey/releases/download/${{ env.KK_VERSION }}/kubekey-${{ env.KK_VERSION }}-linux-amd64.tar.gz
+          tar -xzf kubekey.tar.gz
+          chmod +x kk package.sh
 
-      - name: Replace K8s version in manifest   # 动态写入版本号
+      - name: Replace K8s version in manifest
         run: |
           sed -i "s|version: v1.32.6|version: ${{ env.K8S_VERSION }}|g" manifests/manifest-test.yaml
 
       - name: Build offline package
         run: |
-          ./kk manifest create -f manifests/manifest-test.yaml
-          ./kk package create --manifest manifests/manifest-test.yaml \
-                              --output ${{ env.BUNDLE_NAME }}.tgz
+          ./package.sh -m manifests/manifest-test.yaml -o ${{ env.BUNDLE_NAME }}.tgz
           ls -lh ${{ env.BUNDLE_NAME }}.tgz
 
       - name: Upload artifact (30-day valid)
@@ -55,4 +55,4 @@ jobs:
         with:
           name: ${{ env.BUNDLE_NAME }}-offline
           path: ${{ env.BUNDLE_NAME }}.tgz
-          retention-days: 30          # 显式 30 天
+          retention-days: 30
