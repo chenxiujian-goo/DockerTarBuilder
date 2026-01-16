@@ -34,12 +34,18 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y curl tar gzip
 
-      - name: Download KubeKey release
+      - name: Download KubeKey binary
         run: |
           curl -L -o kubekey.tar.gz \
             https://github.com/kubesphere/kubekey/releases/download/${{ env.KK_VERSION }}/kubekey-${{ env.KK_VERSION }}-linux-amd64.tar.gz
           tar -xzf kubekey.tar.gz
-          chmod +x kk package.sh
+          chmod +x kk
+
+      - name: Download package.sh from source repo
+        run: |
+          curl -L -o package.sh \
+            https://raw.githubusercontent.com/kubesphere/kubekey/${{ env.KK_VERSION }}/package.sh
+          chmod +x package.sh
 
       - name: Replace K8s version in manifest
         run: |
