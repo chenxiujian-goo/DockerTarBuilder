@@ -1,4 +1,4 @@
-name: build-offline-pack-focal
+name: build-offline-pack-focal-in-ubuntu22   # 新名字，与旧文件区分
 
 on:
   workflow_dispatch:
@@ -8,23 +8,26 @@ permissions:
 
 jobs:
   pack:
-    runs-on: ubuntu-20.04          # 关键：用 20.04 运行器
+    runs-on: ubuntu-22.04            # 只能选 22.04 或 latest
     steps:
       - uses: actions/checkout@v4
 
+      # 1. 预先创建目录，把输出挂到容器外
       - name: mkdir
-        run: mkdir -p dist/{bins,images,debs,cni}
+        run: mkdir -p $GITHUB_WORKSPACE/dist/{bins,images,debs,cni}
 
+      # 2. 下载 k8s 二进制（宿主机做即可）
       - name: fetch binaries
         run: |
           VER=v1.27.13
           ARCH=amd64
           for bin in kubeadm kubelet kubectl; do
-            curl -L -o dist/bins/${bin} \
+            curl -L -o $GITHUB_WORKSPACE/dist/bins/${bin} \
               https://dl.k8s.io/release/${VER}/bin/linux/${ARCH}/${bin}
-            chmod +x dist/bins/${bin}
+            chmod +x $GITHUB_WORKSPACE/dist/bins/${bin}
           done
 
+      # 3. 打包镜像（宿主机 Docker 可用）
       - name: save images
         run: |
           sudo systemctl start docker
@@ -37,27 +40,32 @@ jobs:
             registry.k8s.io/coredns/coredns:v1.10.1 \
           )
           for im in "${IMG[@]}"; do sudo docker pull "$im"; done
-          sudo docker save "${IMG[@]}" | gzip > dist/images/k8s-images.tar.gz
+          sudo docker save "${IMG[@]}" | gzip > $GITHUB_WORKSPACE/dist/images/k8s-images.tar.gz
 
-      - name: fetch focal debs
+      # 4. 在 Ubuntu 20.04 容器里抓 focal 依赖
+      - name: fetch focal debs via docker
         run: |
-          sudo apt-get update
-          mkdir -p dist/debs
-          sudo apt-get install --reinstall --download-only \
-                conntrack ebtables ethtool ipset ipvsadm socat
-          sudo cp /var/cache/apt/archives/*.deb dist/debs/
+          docker run --rm -v $GITHUB_WORKSPACE/dist/debs:/out \
+            ubuntu:20.04 bash -c \
+            'apt-get update >/dev/null &&
+             apt-get install --reinstall --download-only -y \
+               conntrack ebtables ethtool ipset ipvsadm socat &&
+             cp /var/cache/apt/archives/*.deb /out/'
 
+      # 5. 下载 CNI 插件
       - name: cni-plugins
         run: |
-          curl -L -o dist/cni/cni-plugins.tgz \
+          curl -L -o $GITHUB_WORKSPACE/dist/cni/cni-plugins.tgz \
             https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
 
+      # 6. 整体打包
       - name: bundle
         run: |
-          cd dist
-          tar czf ../k8s-v1.27.13-offline-focal-amd64.tar.gz *
-          ls -lh ../k8s-*.tar.gz
+          cd $GITHUB_WORKSPACE/dist
+          tar czf $GITHUB_WORKSPACE/k8s-v1.27.13-offline-focal-amd64.tar.gz *
+          ls -lh $GITHUB_WORKSPACE/k8s-*.tar.gz
 
+      # 7. 发布 Release
       - name: release
         uses: softprops/action-gh-release@v1
         with:
