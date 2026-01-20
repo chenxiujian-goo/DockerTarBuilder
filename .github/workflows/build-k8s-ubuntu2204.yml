@@ -1,4 +1,4 @@
-name: build-offline-pack-focal-in-ubuntu22   # 新名字，与旧文件区分
+name: build-k8s-ubuntu2004   # 新文件，专门补 containerd
 
 on:
   workflow_dispatch:
@@ -8,16 +8,15 @@ permissions:
 
 jobs:
   pack:
-    runs-on: ubuntu-22.04            # 只能选 22.04 或 latest
+    runs-on: ubuntu-22.04               # 只能 22.04，用容器跑 20.04
     steps:
       - uses: actions/checkout@v4
 
-      # 1. 预先创建目录，把输出挂到容器外
       - name: mkdir
         run: mkdir -p $GITHUB_WORKSPACE/dist/{bins,images,debs,cni}
 
-      # 2. 下载 k8s 二进制（宿主机做即可）
-      - name: fetch binaries
+      # 1. 下载 k8s 二进制（宿主机）
+      - name: fetch k8s binaries
         run: |
           VER=v1.27.13
           ARCH=amd64
@@ -27,7 +26,35 @@ jobs:
             chmod +x $GITHUB_WORKSPACE/dist/bins/${bin}
           done
 
-      # 3. 打包镜像（宿主机 Docker 可用）
+      # 2. 下载 containerd + runc（在 Ubuntu 20.04 容器里）
+      - name: fetch containerd for focal
+        run: |
+          docker run --rm -v $GITHUB_WORKSPACE/dist:/out \
+            ubuntu:20.04 bash -c \
+            'apt-get update -qq && \
+             apt-get install -y wget ca-certificates && \
+             wget -q https://github.com/containerd/containerd/releases/download/v1.7.6/cri-containerd-cni-1.7.6-linux-amd64.tar.gz -O /out/containerd.tar.gz'
+          # 校验（可选）
+          docker run --rm -v $GITHUB_WORKSPACE/dist:/out \
+            ubuntu:20.04 bash -c 'tar -tzf /out/containerd.tar.gz >/dev/null && echo "containerd tar OK"'
+
+      # 3. 抓 focal 依赖 deb
+      - name: fetch focal debs
+        run: |
+          docker run --rm -v $GITHUB_WORKSPACE/dist/debs:/out \
+            ubuntu:20.04 bash -c \
+            'apt-get update -qq &&
+             apt-get install --reinstall --download-only -y \
+               conntrack ebtables ethtool ipset ipvsadm socat &&
+             cp /var/cache/apt/archives/*.deb /out/'
+
+      # 4. CNI 插件
+      - name: cni-plugins
+        run: |
+          curl -L -o $GITHUB_WORKSPACE/dist/cni/cni-plugins.tgz \
+            https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
+
+      # 5. 保存镜像（宿主机 docker 可用）
       - name: save images
         run: |
           sudo systemctl start docker
@@ -42,22 +69,6 @@ jobs:
           for im in "${IMG[@]}"; do sudo docker pull "$im"; done
           sudo docker save "${IMG[@]}" | gzip > $GITHUB_WORKSPACE/dist/images/k8s-images.tar.gz
 
-      # 4. 在 Ubuntu 20.04 容器里抓 focal 依赖
-      - name: fetch focal debs via docker
-        run: |
-          docker run --rm -v $GITHUB_WORKSPACE/dist/debs:/out \
-            ubuntu:20.04 bash -c \
-            'apt-get update >/dev/null &&
-             apt-get install --reinstall --download-only -y \
-               conntrack ebtables ethtool ipset ipvsadm socat &&
-             cp /var/cache/apt/archives/*.deb /out/'
-
-      # 5. 下载 CNI 插件
-      - name: cni-plugins
-        run: |
-          curl -L -o $GITHUB_WORKSPACE/dist/cni/cni-plugins.tgz \
-            https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
-
       # 6. 整体打包
       - name: bundle
         run: |
@@ -65,7 +76,7 @@ jobs:
           tar czf $GITHUB_WORKSPACE/k8s-v1.27.13-offline-focal-amd64.tar.gz *
           ls -lh $GITHUB_WORKSPACE/k8s-*.tar.gz
 
-      # 7. 发布 Release
+      # 7. 发布
       - name: release
         uses: softprops/action-gh-release@v1
         with:
@@ -74,9 +85,9 @@ jobs:
           body: |
             包含：
             - kubeadm / kubelet / kubectl 二进制
-            - Ubuntu 20.04 (focal) 官方依赖 deb 及完整依赖
+            - containerd + runc + CNI 插件（20.04 可用）
+            - Ubuntu 20.04 官方依赖 deb 及完整依赖
             - 核心组件镜像（已 docker save）
-            - CNI 插件
             使用方法见仓库 README。
           files: k8s-v1.27.13-offline-focal-amd64.tar.gz
           draft: false
