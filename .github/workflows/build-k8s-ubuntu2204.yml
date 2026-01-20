@@ -1,4 +1,4 @@
-name: build-offline-pack-focal          # 新名字，与旧文件区分
+name: build-offline-pack-focal
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   pack:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04          # 关键：用 20.04 运行器
     steps:
       - uses: actions/checkout@v4
 
@@ -39,21 +39,13 @@ jobs:
           for im in "${IMG[@]}"; do sudo docker pull "$im"; done
           sudo docker save "${IMG[@]}" | gzip > dist/images/k8s-images.tar.gz
 
-      - name: fetch 20.04 compatible debs
+      - name: fetch focal debs
         run: |
-          sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
-          sudo tee /etc/apt/sources.list <<EOF
-          deb http://archive.ubuntu.com/ubuntu focal main restricted universe multiverse
-          deb http://archive.ubuntu.com/ubuntu focal-updates main restricted universe multiverse
-          deb http://archive.ubuntu.com/ubuntu focal-security main restricted universe multiverse
-          EOF
           sudo apt-get update
           mkdir -p dist/debs
           sudo apt-get install --reinstall --download-only \
                 conntrack ebtables ethtool ipset ipvsadm socat
           sudo cp /var/cache/apt/archives/*.deb dist/debs/
-          sudo mv /etc/apt/sources.list.bak /etc/apt/sources.list
-          sudo apt-get update
 
       - name: cni-plugins
         run: |
@@ -74,7 +66,7 @@ jobs:
           body: |
             包含：
             - kubeadm / kubelet / kubectl 二进制
-            - 兼容 Ubuntu 20.04 的系统 deb 包及全部依赖
+            - Ubuntu 20.04 (focal) 官方依赖 deb 及完整依赖
             - 核心组件镜像（已 docker save）
             - CNI 插件
             使用方法见仓库 README。
