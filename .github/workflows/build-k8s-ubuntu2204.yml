@@ -1,0 +1,83 @@
+name: build-offline-pack-focal          # 新名字，与旧文件区分
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: mkdir
+        run: mkdir -p dist/{bins,images,debs,cni}
+
+      - name: fetch binaries
+        run: |
+          VER=v1.27.13
+          ARCH=amd64
+          for bin in kubeadm kubelet kubectl; do
+            curl -L -o dist/bins/${bin} \
+              https://dl.k8s.io/release/${VER}/bin/linux/${ARCH}/${bin}
+            chmod +x dist/bins/${bin}
+          done
+
+      - name: save images
+        run: |
+          sudo systemctl start docker
+          IMG=( \
+            registry.k8s.io/kube-apiserver:v1.27.13 \
+            registry.k8s.io/kube-controller-manager:v1.27.13 \
+            registry.k8s.io/kube-scheduler:v1.27.13 \
+            registry.k8s.io/kube-proxy:v1.27.13 \
+            registry.k8s.io/pause:3.9 \
+            registry.k8s.io/coredns/coredns:v1.10.1 \
+          )
+          for im in "${IMG[@]}"; do sudo docker pull "$im"; done
+          sudo docker save "${IMG[@]}" | gzip > dist/images/k8s-images.tar.gz
+
+      - name: fetch 20.04 compatible debs
+        run: |
+          sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
+          sudo tee /etc/apt/sources.list <<EOF
+          deb http://archive.ubuntu.com/ubuntu focal main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu focal-updates main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu focal-security main restricted universe multiverse
+          EOF
+          sudo apt-get update
+          mkdir -p dist/debs
+          sudo apt-get install --reinstall --download-only \
+                conntrack ebtables ethtool ipset ipvsadm socat
+          sudo cp /var/cache/apt/archives/*.deb dist/debs/
+          sudo mv /etc/apt/sources.list.bak /etc/apt/sources.list
+          sudo apt-get update
+
+      - name: cni-plugins
+        run: |
+          curl -L -o dist/cni/cni-plugins.tgz \
+            https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
+
+      - name: bundle
+        run: |
+          cd dist
+          tar czf ../k8s-v1.27.13-offline-focal-amd64.tar.gz *
+          ls -lh ../k8s-*.tar.gz
+
+      - name: release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.27.13-offline-focal
+          name: "k8s v1.27.13 离线完整包（Ubuntu 20.04 focal amd64）"
+          body: |
+            包含：
+            - kubeadm / kubelet / kubectl 二进制
+            - 兼容 Ubuntu 20.04 的系统 deb 包及全部依赖
+            - 核心组件镜像（已 docker save）
+            - CNI 插件
+            使用方法见仓库 README。
+          files: k8s-v1.27.13-offline-focal-amd64.tar.gz
+          draft: false
+          prerelease: false
