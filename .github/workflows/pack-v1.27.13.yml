@@ -1,0 +1,80 @@
+name: build-offline-pack
+
+# 手动点按钮触发
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 官方 token 默认就有写权限，无需额外 secret
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. 创建离线包目录
+      - name: mkdir
+        run: mkdir -p dist/{bins,images,debs,cni}
+
+      # 2. 下载二进制（举例：kubeadm、kubelet、kubectl）
+      - name: fetch binaries
+        run: |
+          VER=v1.27.13
+          ARCH=amd64
+          for bin in kubeadm kubelet kubectl; do
+            curl -L -o dist/bins/${bin} \
+              https://dl.k8s.io/release/${VER}/bin/linux/${ARCH}/${bin}
+            chmod +x dist/bins/${bin}
+          done
+
+      # 3. 打包镜像（用临时 docker 服务）
+      - name: save images
+        run: |
+          sudo systemctl start docker
+          IMG=( \
+            registry.k8s.io/kube-apiserver:v1.27.13 \
+            registry.k8s.io/kube-controller-manager:v1.27.13 \
+            registry.k8s.io/kube-scheduler:v1.27.13 \
+            registry.k8s.io/kube-proxy:v1.27.13 \
+            registry.k8s.io/pause:3.9 \
+            registry.k8s.io/coredns/coredns:v1.10.1 \
+          )
+          for im in "${IMG[@]}"; do sudo docker pull "$im"; done
+          sudo docker save "${IMG[@]}" | gzip > dist/images/k8s-images.tar.gz
+
+      # 4. 下载 deb 依赖（示例）
+      - name: fetch debs
+        run: |
+          cd dist/debs
+          apt-get download conntrack ipvsadm ebtables socat ethtool ipset
+
+      # 5. 打包 CNI 插件
+      - name: cni-plugins
+        run: |
+          curl -L -o dist/cni/cni-plugins.tgz \
+            https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
+
+      # 6. 整体再压一个 tar 方便浏览器单文件下载
+      - name: bundle
+        run: |
+          cd dist
+          tar czf ../k8s-v1.27.13-offline-ubuntu20-amd64.tar.gz *
+          ls -lh ../k8s-*.tar.gz
+
+      # 7. 上传到 Release（自动生成 tag 并附资产）
+      - name: release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.27.13-offline
+          name: "k8s v1.27.13 离线完整包（Ubuntu 20.04 amd64）"
+          body: |
+            包含：
+            - kubeadm / kubelet / kubectl 二进制
+            - 必需系统 deb 包
+            - 核心组件镜像（已 docker save）
+            - CNI 插件
+            使用方法见仓库 README。
+          files: k8s-v1.27.13-offline-ubuntu20-amd64.tar.gz
+          draft: false
+          prerelease: false
