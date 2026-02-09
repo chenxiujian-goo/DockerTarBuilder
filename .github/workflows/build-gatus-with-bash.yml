@@ -1,53 +1,87 @@
-name: Add Bash to Gatus and Export as Tar
+name: Build Gatus with Bash
 
 on:
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:  # 手动触发
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: twin/gatus
+  TAG: stable
 
 jobs:
-  build-and-export:
+  build-with-bash:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read  # 需要读取 GHCR 镜像
+
     steps:
-      - name: Checkout repository (optional, for clarity)
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # 登录到 GitHub Container Registry (读取基础镜像需要)
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull original gatus image
+      # 拉取基础镜像
+      - name: Pull base image
         run: |
-          docker pull ghcr.io/twin/gatus:stable
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          echo "Base image pulled successfully"
 
-      - name: Create Dockerfile to add Bash
+      # 在原镜像中安装 bash 并保存为新镜像
+      - name: Add bash to image
         run: |
-          cat > Dockerfile << 'EOF'
-          # Stage 1: Extract binary and config from original image
-          FROM ghcr.io/twin/gatus:stable AS original
+          # 创建 Dockerfile 用于在基础镜像上添加 bash
+          cat > Dockerfile.with-bash << 'DOCKERFILE_EOF'
+          FROM alpine:latest AS bash-installer
+          RUN apk add --no-cache bash
 
-          # Stage 2: Run on Alpine with Bash
-          FROM alpine:latest
-          RUN apk --no-cache add ca-certificates bash
-          COPY --from=original /gatus /gatus
-          COPY --from=original /config/config.yaml /config/config.yaml
-          EXPOSE 8080
-          ENTRYPOINT ["/gatus"]
-          EOF
+          FROM ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          
+          COPY --from=bash-installer /bin/bash /bin/bash
+          COPY --from=bash-installer /lib/ld-musl-x86_64.so.1 /lib/
+          COPY --from=bash-installer /etc/passwd /etc/passwd
+          DOCKERFILE_EOF
+          
+          # 构建新镜像
+          docker build -f Dockerfile.with-bash -t gatus-with-bash:latest .
+          
+          echo "Image built successfully with bash"
 
-      - name: Build new image with Bash
+      # 将镜像保存为 tar 文件
+      - name: Save image to tar
         run: |
-          docker build -t gatus-with-bash .
+          docker save gatus-with-bash:latest -o gatus-with-bash.tar
+          ls -lh gatus-with-bash.tar
+          
+          # 压缩以减小体积
+          gzip -c gatus-with-bash.tar > gatus-with-bash.tar.gz
+          ls -lh gatus-with-bash.tar.gz
 
-      - name: Save image as tar
-        run: |
-          docker save gatus-with-bash -o gatus-with-bash.tar
-
-      - name: Upload artifact (expires in 90 days by default; note: GH doesn't support <90d retention via API)
+      # 上传 artifact（7天有效期）
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gatus-with-bash.tar
-          path: gatus-with-bash.tar
-          retention-days: 7  # ✅ GitHub Actions now supports custom retention (min 1, max 90)
+          name: gatus-with-bash
+          path: |
+            gatus-with-bash.tar
+            gatus-with-bash.tar.gz
+          retention-days: 7  # 7天有效期
+          compression-level: 0  # 已经压缩过了，不需要再压缩
 
-      - name: Confirm size and existence
+      # 可选：显示镜像信息
+      - name: Show image info
         run: |
-          ls -lh gatus-with-bash.tar
-          echo "✅ Artifact ready for download in the 'Actions' tab."
+          echo "=== 原始镜像信息 ==="
+          docker images ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }} --format "{{.Repository}}:{{.Tag}} - {{.Size}}"
+          
+          echo "=== 新镜像信息 ==="
+          docker images gatus-with-bash:latest --format "{{.Repository}}:{{.Tag}} - {{.Size}}"
+          
+          echo "=== 测试 bash 是否可用 ==="
+          docker run --rm gatus-with-bash:latest /bin/bash --version || echo "Bash test completed"
