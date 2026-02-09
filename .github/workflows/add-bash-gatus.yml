@@ -1,0 +1,51 @@
+name: Add Bash to Gatus and Export as Tar
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull original gatus image
+        run: docker pull ghcr.io/twin/gatus:stable
+
+      - name: Create Dockerfile to add Bash (Alpine base)
+        run: |
+          cat > Dockerfile << 'EOF'
+          # Stage 1: Extract assets from original scratch-based image
+          FROM ghcr.io/twin/gatus:stable AS original
+
+          # Stage 2: Run on minimal Alpine with Bash
+          FROM alpine:latest
+          RUN apk --no-cache add ca-certificates bash
+          COPY --from=original /gatus /gatus
+          COPY --from=original /config/config.yaml /config/config.yaml
+          EXPOSE 8080
+          ENTRYPOINT ["/gatus"]
+          EOF
+
+      - name: Build new image with Bash
+        run: docker build -t gatus-with-bash .
+
+      - name: Verify Bash is installed (without running container)
+        run: |
+          echo "🔍 Checking if /bin/bash exists in the image..."
+          CONTAINER_ID=$(docker create gatus-with-bash)
+          if docker export "$CONTAINER_ID" | tar -t | grep -q '^bin/bash$'; then
+            echo "✅ Bash successfully installed!"
+          else
+            echo "❌ ERROR: Bash not found in image!"
+            exit 1
+          fi
+          docker rm "$CONTAINER_ID"
+
+      - name: Save image as tar archive
+        run: docker save gatus-with-bash -o gatus-with-bash.tar
+
+      - name: Upload artifact (retention: 7 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gatus-with-bash.tar
+          path: gatus-with-bash.tar
+          retention-days: 7
