@@ -1,112 +1,53 @@
-name: Build Gatus with Bash
+name: Add Bash to Gatus and Export as Tar
 
 on:
-  workflow_dispatch:  # 手动触发
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: twin/gatus
-  TAG: stable
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
-  build-with-bash:
+  build-and-export:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read  # 需要读取 GHCR 镜像
-
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (optional, for clarity)
         uses: actions/checkout@v4
 
-      # 登录到 GitHub Container Registry (读取基础镜像需要)
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      # 拉取基础镜像
-      - name: Pull base image
+      - name: Pull original gatus image
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
-          echo "Base image pulled successfully"
+          docker pull ghcr.io/twin/gatus:stable
 
-      # 在原镜像中安装 bash 并保存为新镜像
-      - name: Add bash to image
+      - name: Create Dockerfile to add Bash
         run: |
-          # 创建 Dockerfile 用于在基础镜像上添加 bash
-          cat > Dockerfile.add-bash << 'EOF'
-          FROM ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
-          
-          # 安装 bash（使用 Alpine 的 apk，因为基础镜像是基于 Alpine 构建的）
-          # 注意：原镜像是 FROM scratch，但构建阶段使用了 golang:alpine
-          # 我们需要判断基础镜像是否有包管理器
-          
-          # 尝试安装 bash（如果基础镜像有 shell 环境）
-          RUN if command -v apt-get >/dev/null 2>&1; then \
-                apt-get update && apt-get install -y bash; \
-              elif command -v apk >/dev/null 2>&1; then \
-                apk add --no-cache bash; \
-              else \
-                echo "No package manager found, trying alternative method"; \
-              fi
+          cat > Dockerfile << 'EOF'
+          # Stage 1: Extract binary and config from original image
+          FROM ghcr.io/twin/gatus:stable AS original
+
+          # Stage 2: Run on Alpine with Bash
+          FROM alpine:latest
+          RUN apk --no-cache add ca-certificates bash
+          COPY --from=original /gatus /gatus
+          COPY --from=original /config/config.yaml /config/config.yaml
+          EXPOSE 8080
+          ENTRYPOINT ["/gatus"]
           EOF
-          
-          # 由于原镜像是 scratch（无 shell），我们需要用多阶段构建
-          # 在构建阶段安装 bash，然后复制到最终镜像
-          cat > Dockerfile.with-bash << 'EOF'
-          # 使用与原始镜像相同的构建方式，但添加 bash
-          FROM alpine:latest AS bash-installer
-          RUN apk add --no-cache bash
-          
-          # 从原镜像复制所有内容
-          FROM ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
-          
-          # 从 alpine 复制 bash 及其依赖
-          COPY --from=bash-installer /bin/bash /bin/bash
-          COPY --from=bash-installer /lib/ld-musl-x86_64.so.1 /lib/
-          COPY --from=bash-installer /etc/passwd /etc/passwd
-          
-          # 确保 bash 可以运行
-          SHELL ["/bin/bash", "-c"]
-          EOF
-          
-          # 构建新镜像
-          docker build -f Dockerfile.with-bash -t gatus-with-bash:latest .
-          
-          echo "Image built successfully with bash"
 
-      # 将镜像保存为 tar 文件
-      - name: Save image to tar
+      - name: Build new image with Bash
         run: |
-          docker save gatus-with-bash:latest -o gatus-with-bash.tar
-          ls -lh gatus-with-bash.tar
-          
-          # 压缩以减小体积
-          gzip -c gatus-with-bash.tar > gatus-with-bash.tar.gz
-          ls -lh gatus-with-bash.tar.gz
+          docker build -t gatus-with-bash .
 
-      # 上传 artifact（7天有效期）
-      - name: Upload artifact
+      - name: Save image as tar
+        run: |
+          docker save gatus-with-bash -o gatus-with-bash.tar
+
+      - name: Upload artifact (expires in 90 days by default; note: GH doesn't support <90d retention via API)
         uses: actions/upload-artifact@v4
         with:
-          name: gatus-with-bash
-          path: |
-            gatus-with-bash.tar
-            gatus-with-bash.tar.gz
-          retention-days: 7  # 7天有效期
-          compression-level: 0  # 已经压缩过了，不需要再压缩
+          name: gatus-with-bash.tar
+          path: gatus-with-bash.tar
+          retention-days: 7  # ✅ GitHub Actions now supports custom retention (min 1, max 90)
 
-      # 可选：显示镜像信息
-      - name: Show image info
+      - name: Confirm size and existence
         run: |
-          echo "=== 原始镜像信息 ==="
-          docker images ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }} --format "{{.Repository}}:{{.Tag}} - {{.Size}}"
-          
-          echo "=== 新镜像信息 ==="
-          docker images gatus-with-bash:latest --format "{{.Repository}}:{{.Tag}} - {{.Size}}"
-          
-          echo "=== 测试 bash 是否可用 ==="
-          docker run --rm gatus-with-bash:latest /bin/bash --version || echo "Bash test completed"
+          ls -lh gatus-with-bash.tar
+          echo "✅ Artifact ready for download in the 'Actions' tab."
