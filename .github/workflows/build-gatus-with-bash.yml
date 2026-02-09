@@ -37,16 +37,16 @@ jobs:
       - name: Add bash to image
         run: |
           # 创建 Dockerfile 用于在基础镜像上添加 bash
-          cat > Dockerfile.with-bash << 'DOCKERFILE_EOF'
+          tee Dockerfile.with-bash > /dev/null <<'EOF'
           FROM alpine:latest AS bash-installer
           RUN apk add --no-cache bash
 
-          FROM ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          FROM ghcr.io/twin/gatus:stable
           
           COPY --from=bash-installer /bin/bash /bin/bash
           COPY --from=bash-installer /lib/ld-musl-x86_64.so.1 /lib/
           COPY --from=bash-installer /etc/passwd /etc/passwd
-          DOCKERFILE_EOF
+          EOF
           
           # 构建新镜像
           docker build -f Dockerfile.with-bash -t gatus-with-bash:latest .
