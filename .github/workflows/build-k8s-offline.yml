@@ -1,29 +1,26 @@
 name: Add Bash to Gatus and Export as Tar
 
 on:
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   build-and-export:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository (optional, for clarity)
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Pull original gatus image
-        run: |
-          docker pull ghcr.io/twin/gatus:stable
+        run: docker pull ghcr.io/twin/gatus:stable
 
       - name: Create Dockerfile to add Bash
         run: |
           cat > Dockerfile << 'EOF'
-          # Stage 1: Extract binary and config from original image
           FROM ghcr.io/twin/gatus:stable AS original
 
-          # Stage 2: Run on Alpine with Bash
           FROM alpine:latest
           RUN apk --no-cache add ca-certificates bash
           COPY --from=original /gatus /gatus
@@ -33,21 +30,14 @@ jobs:
           EOF
 
       - name: Build new image with Bash
-        run: |
-          docker build -t gatus-with-bash .
+        run: docker build -t gatus-with-bash .
 
       - name: Save image as tar
-        run: |
-          docker save gatus-with-bash -o gatus-with-bash.tar
+        run: docker save gatus-with-bash -o gatus-with-bash.tar
 
-      - name: Upload artifact (expires in 90 days by default; note: GH doesn't support <90d retention via API)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: gatus-with-bash.tar
           path: gatus-with-bash.tar
-          retention-days: 7  # ✅ GitHub Actions now supports custom retention (min 1, max 90)
-
-      - name: Confirm size and existence
-        run: |
-          ls -lh gatus-with-bash.tar
-          echo "✅ Artifact ready for download in the 'Actions' tab."
+          retention-days: 7
