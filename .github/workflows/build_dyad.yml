@@ -56,10 +56,11 @@ jobs:
           RUN npm run ts || true
           RUN ls -la node_modules | head -20
 
-          RUN echo '#!/bin/bash
-          cd /app
-          echo "Starting Dyad in container..."
-          timeout 10s npm start || echo "Test completed after 10 seconds"
+          SHELL ["/bin/bash", "-c"]
+          RUN echo $'#!/bin/bash\n\
+          cd /app\n\
+          echo "Starting Dyad in container..."\n\
+          timeout 10s npm start || echo "Test completed after 10 seconds"\n\
           echo "Container test finished"' > /usr/local/bin/test-start.sh && \
           chmod +x /usr/local/bin/test-start.sh
 
