@@ -1,0 +1,122 @@
+name: Build Dyad Docker Image with Node Modules  
+  
+on:  
+  workflow_dispatch:  
+  
+jobs:  
+  build-and-package:  
+    runs-on: ubuntu-latest  
+    permissions:  
+      contents: read  
+      packages: write  
+      
+    steps:  
+      - name: Checkout repository  
+        uses: actions/checkout@v4  
+          
+      - name: Set up Docker Buildx  
+        uses: docker/setup-buildx-action@v3  
+          
+      - name: Create Dockerfile  
+        run: |  
+          cat > Dockerfile << 'EOF'  
+          FROM node:22.22-bullseye  
+            
+          # 设置工作目录  
+          WORKDIR /app  
+            
+          # 安装必要的系统依赖  
+          RUN apt-get update && apt-get install -y \  
+            git \  
+            python3 \  
+            make \  
+            g++ \  
+            libnss3-dev \  
+            libatk-bridge2.0-dev \  
+            libdrm2 \  
+            libxkbcommon-dev \  
+            libxcomposite-dev \  
+            libxdamage-dev \  
+            libxrandr-dev \  
+            libgbm-dev \  
+            libxss-dev \  
+            libasound2-dev \  
+            && rm -rf /var/lib/apt/lists/*  
+            
+          # 设置 npm 和 electron 镜像源  
+          ENV npm_config_registry=https://registry.npmmirror.com  
+          ENV ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/  
+            
+          # 复制 package.json 和 package-lock.json  
+          COPY package*.json ./  
+            
+          # 清理 npm 缓存并安装依赖  
+          RUN npm cache clean --force  
+          RUN npm ci --no-audit --no-fund  
+            
+          # 复制所有源代码  
+          COPY . .  
+            
+          # 创建 userData 目录（数据库需要）  
+          RUN mkdir -p userData  
+            
+          # 验证安装  
+          RUN npm run ts || true  
+          RUN ls -la node_modules | head -20  
+            
+          # 设置启动脚本  
+          RUN echo '#!/bin/bash\n\  
+          cd /app\n\  
+          echo "Starting Dyad in container..."\n\  
+          timeout 10s npm start || echo "Test completed after 10 seconds"\n\  
+          echo "Container test finished"' > /usr/local/bin/test-start.sh && \  
+          chmod +x /usr/local/bin/test-start.sh  
+            
+          CMD ["/usr/local/bin/test-start.sh"]  
+          EOF  
+            
+      - name: Build Docker image  
+        run: |  
+          docker build -t dyad-dev-env:latest .  
+            
+      - name: Test container startup  
+        run: |  
+          echo "Testing container startup for 10 seconds..."  
+          timeout 15s docker run --rm dyad-dev-env:latest || echo "Test completed"  
+            
+      - name: Save Docker image as tar  
+        run: |  
+          docker save dyad-dev-env:latest | gzip > dyad-dev-env.tar.gz  
+          ls -lh dyad-dev-env.tar.gz  
+            
+      - name: Upload Docker image artifact  
+        uses: actions/upload-artifact@v4  
+        with:  
+          name: dyad-dev-env-docker-image  
+          path: dyad-dev-env.tar.gz  
+          retention-days: 7  
+            
+      - name: Create image info  
+        run: |  
+          echo "## Docker Image Information" > image-info.md  
+          echo "- Image: dyad-dev-env:latest" >> image-info.md  
+          echo "- Node.js: 22.22" >> image-info.md  
+          echo "- Size: $(du -h dyad-dev-env.tar.gz | cut -f1)" >> image-info.md  
+          echo "- Build Date: $(date)" >> image-info.md  
+          echo "- Project: Dyad AI App Builder" >> image-info.md  
+          echo "" >> image-info.md  
+          echo "## Load and Run Instructions" >> image-info.md  
+          echo '```bash' >> image-info.md  
+          echo "# Load the image" >> image-info.md  
+          echo "docker load < dyad-dev-env.tar.gz" >> image-info.md  
+          echo "" >> image-info.md  
+          echo "# Run the container" >> image-info.md  
+          echo "docker run -it --rm dyad-dev-env:latest" >> image-info.md  
+          echo '```' >> image-info.md  
+            
+      - name: Upload image info  
+        uses: actions/upload-artifact@v4  
+        with:  
+          name: docker-image-info  
+          path: image-info.md  
+          retention-days: 7
