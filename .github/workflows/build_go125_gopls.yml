@@ -1,0 +1,103 @@
+name: Build and Release gopls
+
+on:
+  workflow_dispatch:  # 手动触发
+  push:
+    tags:
+      - 'v*'  # 或者通过tag触发
+
+jobs:
+  build-gopls:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Start Ubuntu 20.04 container and build gopls
+        id: build
+        run: |
+          # 创建并启动Ubuntu 20.04容器
+          docker run --name build-container -d ubuntu:20.04 sleep 3600
+          
+          # 在容器中执行构建命令
+          docker exec build-container bash -c '
+            set -e
+            
+            # 更新apt并安装必要的依赖
+            apt-get update
+            apt-get install -y wget git gcc
+            
+            # 下载并安装 Go 1.25.0
+            GO_VERSION="1.25.0"
+            wget https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
+            tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
+            rm go${GO_VERSION}.linux-amd64.tar.gz
+            
+            # 设置Go环境变量
+            export PATH=$PATH:/usr/local/go/bin
+            export GOPATH=/root/go
+            export GOBIN=$GOPATH/bin
+            
+            # 验证Go安装
+            echo "Go version:"
+            go version
+            
+            # 安装gopls
+            echo "Installing gopls..."
+            go install golang.org/x/tools/gopls@latest
+            
+            # 输出gopls版本
+            echo "gopls version:"
+            $GOBIN/gopls version
+            
+            # 创建输出目录
+            mkdir -p /output
+            cp $GOBIN/gopls /output/gopls
+          '
+          
+          # 从容器中复制gopls到宿主机
+          docker cp build-container:/output/gopls ./gopls
+          
+          # 停止并删除容器
+          docker stop build-container
+          docker rm build-container
+          
+          # 验证复制的文件
+          echo "gopls binary info:"
+          file ./gopls
+          ls -lh ./gopls
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name || 'v1.0.0' }}
+          release_name: gopls Release ${{ github.ref_name || 'v1.0.0' }}
+          body: |
+            gopls built in Ubuntu 20.04 with Go 1.25.0
+          draft: false
+          prerelease: false
+      
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./gopls
+          asset_name: gopls-linux-amd64
+          asset_content_type: application/octet-stream
+      
+      - name: Upload to Artifacts (7 days retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gopls-binary
+          path: ./gopls
+          retention-days: 7  # 设置7天保留期
+          if-no-files-found: error
